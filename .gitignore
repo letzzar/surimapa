@@ -1,0 +1,26 @@
+# Secretos
+.env
+
+# Datos locales (BD, Redis, GeoIP)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.mmdb
+!tests/fixtures/geoip/*.mmdb
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+
+# macOS en recurso SMB
+._*
+.DS_Store
+.smbdelete*
+.AppleDouble
+
+# Windows
+Thumbs.db
+desktop.ini

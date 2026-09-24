@@ -1,0 +1,63 @@
+{
+  "timestamp": "2026-09-23T10:47:37.161496+0200",
+  "flow_id": 1234567890123,
+  "in_iface": "pppoe0",
+  "event_type": "alert",
+  "src_ip": "198.51.100.23",
+  "src_port": 57948,
+  "dest_ip": "192.0.2.10",
+  "dest_port": 8443,
+  "proto": "TCP",
+  "ip_v": 4,
+  "pkt_src": "wire/pcap",
+  "alert": {
+    "action": "allowed",
+    "gid": 1,
+    "signature_id": 2403445,
+    "rev": 111916,
+    "signature": "ET CINS Active Threat Intelligence Poor Reputation IP group 146",
+    "category": "Misc Attack",
+    "severity": 2,
+    "metadata": {
+      "affected_product": [
+        "Any"
+      ],
+      "attack_target": [
+        "Any"
+      ],
+      "created_at": [
+        "2013_10_08"
+      ],
+      "deployment": [
+        "Perimeter"
+      ],
+      "signature_severity": [
+        "Major"
+      ],
+      "tag": [
+        "CINS"
+      ],
+      "updated_at": [
+        "2026_09_22"
+      ]
+    }
+  },
+  "direction": "to_server",
+  "flow": {
+    "pkts_toserver": 1,
+    "pkts_toclient": 0,
+    "bytes_toserver": 44,
+    "bytes_toclient": 0,
+    "start": "2026-09-23T10:47:37.161496+0200",
+    "src_ip": "198.51.100.23",
+    "dest_ip": "192.0.2.10",
+    "src_port": 57948,
+    "dest_port": 8443
+  },
+  "packet": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "packet_info": {
+    "linktype": 0,
+    "linktype_name": "NULL"
+  },
+  "host": "firewall.example"
+}

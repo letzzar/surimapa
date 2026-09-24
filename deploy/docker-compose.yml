@@ -1,0 +1,88 @@
+name: surimapa
+
+# Surimapa: docker compose up -d --build   (guía / guide: docs/es/DESPLIEGUE.md, docs/en/DEPLOYMENT.md)
+
+services:
+  redis:
+    image: redis:7-alpine
+    # El paquete Suricata de pfSense no admite contraseña de Redis. Por eso se usan ACL:
+    #   default  (sin contraseña, lo usa Suricata): solo LPUSH/RPUSH/PING sobre la clave REDIS_KEY
+    #   surimapa (REDIS_PASSWORD, lo usan el colector y el portal): todo salvo @dangerous (+ ACL LOG para diagnóstico)
+    command: >
+      sh -c 'exec redis-server --appendonly yes
+      --maxmemory 48mb --maxmemory-policy noeviction
+      --user default on nopass "~$${REDIS_KEY}" -@all +lpush +rpush +ping
+      --user surimapa on ">$${REDIS_PASSWORD}" "~*" +@all -@dangerous "+acl|log"'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Definir REDIS_PASSWORD en .env}
+      REDIS_KEY: ${REDIS_KEY:-suricata}
+    ports: ["${NAS_LAN_IP:?Definir NAS_LAN_IP en .env}:6379:6379"]
+    volumes: ["${DATA_DIR}/redis:/data"]
+    healthcheck:                  # PING está permitido al usuario anónimo (ACL)
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    mem_limit: 64m
+    restart: unless-stopped
+
+  geoipupdate:
+    image: maxmindinc/geoipupdate:latest
+    environment:                  # solo sus variables (no recibe la contraseña de Redis)
+      GEOIPUPDATE_ACCOUNT_ID: ${GEOIPUPDATE_ACCOUNT_ID:-}
+      GEOIPUPDATE_LICENSE_KEY: ${GEOIPUPDATE_LICENSE_KEY:-}
+      GEOIPUPDATE_EDITION_IDS: ${GEOIPUPDATE_EDITION_IDS:-GeoLite2-City GeoLite2-ASN}
+      GEOIPUPDATE_FREQUENCY: ${GEOIPUPDATE_FREQUENCY:-168}
+      TZ: ${TZ:-UTC}
+    volumes: ["${DATA_DIR}/geoip:/usr/share/GeoIP"]
+    mem_limit: 32m
+    restart: unless-stopped
+
+  collector:
+    build: ./collector
+    # Red del host: Synology cambia el origen de los paquetes que entran por un puerto publicado
+    # (el contenedor vería la pasarela de Docker, no pfSense) y el filtro PFSENSE_IP no serviría.
+    # Así el colector ve la IP real. No publica nada más; Redis se alcanza por la IP LAN.
+    network_mode: host
+    environment:                  # solo sus variables (no recibe la clave de MaxMind)
+      REDIS_URL: redis://${NAS_LAN_IP:?Definir NAS_LAN_IP en .env}:6379/0
+      REDIS_USER: surimapa
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Definir REDIS_PASSWORD en .env}
+      REDIS_KEY: ${REDIS_KEY:-suricata}
+      WAN_IPS: ${WAN_IPS:-}
+      RETENTION_DAYS: ${RETENTION_DAYS:-90}
+      BACKUP_KEEP: ${BACKUP_KEEP:-7}
+      TZ: ${TZ:-UTC}
+      DB_PATH: /data/surimapa.db
+      GEOIP_DIR: /geoip
+      # Bloqueos del firewall: filterlog de pfSense por syslog UDP
+      FW_SYSLOG_PORT: ${FW_SYSLOG_PORT:-5140}
+      PFSENSE_IP: ${PFSENSE_IP:?Definir PFSENSE_IP en .env (origen permitido del syslog)}
+      FW_IFACE: ${FW_IFACE:-pppoe0}
+      FW_RETENTION_DAYS: ${FW_RETENTION_DAYS:-30}
+      FW_BIND: ${NAS_LAN_IP}                   # solo la IP LAN del NAS
+    volumes:
+      - "${DATA_DIR}/data:/data"
+      - "${DATA_DIR}/geoip:/geoip:ro"
+      - "${DATA_DIR}/backups:/backups"      # copias en caliente
+    depends_on: [redis]
+    mem_limit: 128m
+    restart: unless-stopped
+
+  portal:
+    build: ./portal
+    environment:                  # solo sus variables (no recibe la clave de MaxMind)
+      REDIS_URL: redis://redis:6379/0
+      REDIS_USER: surimapa
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Definir REDIS_PASSWORD en .env}
+      REDIS_KEY: ${REDIS_KEY:-suricata}
+      PORTAL_USER: ${PORTAL_USER:?Definir PORTAL_USER en .env}
+      PORTAL_PASSWORD: ${PORTAL_PASSWORD:?Definir PORTAL_PASSWORD en .env}
+      TZ: ${TZ:-UTC}
+      DB_PATH: /data/surimapa.db
+    # rw: WAL necesita el fichero -shm; la app abre la BD en mode=ro + query_only.
+    volumes: ["${DATA_DIR}/data:/data"]
+    ports: ["${PORTAL_PORT:-8095}:8000"]
+    depends_on: [collector]
+    mem_limit: 192m
+    restart: unless-stopped
