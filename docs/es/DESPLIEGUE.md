@@ -2,7 +2,7 @@
 
 [English](../en/DEPLOYMENT.md) · **Español**
 
-Surimapa se arranca con Docker Compose: tres contenedores permanentes (`redis`, `collector`, `portal`) más `geoipupdate`, que se ejecuta una vez por semana para actualizar GeoLite2. Esta guía cubre un host Linux genérico e incluye notas para NAS Synology. Cuando esté en marcha, sigue la [guía de fuentes de datos](FUENTES.md) para enviarle alertas.
+Surimapa son cuatro contenedores que se arrancan con Docker Compose: `redis`, `collector`, `portal` y `geoipupdate`, que actualiza GeoLite2 una vez por semana con su propio calendario. Esta guía cubre un host Linux genérico e incluye notas para NAS Synology. Cuando esté en marcha, sigue la [guía de fuentes de datos](FUENTES.md) para enviarle alertas.
 
 Todas las direcciones IP son **ejemplos**. Sustitúyelas por las tuyas:
 
@@ -98,7 +98,7 @@ Reglas:
 
 - **Nunca subas `.env` a git**, ni copies sus valores en logs o capturas.
 - Si un valor no se interpreta bien por culpa de un comentario al final de la línea, pasa el comentario a su propia línea.
-- Para comprobar la interpolación sin mostrar secretos: `sudo docker compose config --services` debe listar `redis`, `collector` y `portal` (`geoipupdate` está en el perfil `geoip`, §9).
+- Para comprobar la interpolación sin mostrar secretos: `sudo docker compose config --services` debe listar los 4 servicios.
 
 ### Personalizar el mapa (opcional)
 
@@ -113,12 +113,11 @@ Después de cambiarlos, reconstruye el portal con `sudo docker compose up -d --b
 
 ```bash
 cd /opt/surimapa/app
-sudo docker compose run --rm geoipupdate   # descarga GeoLite2 (unos 80 MB) y termina
 sudo docker compose up -d --build
 sudo docker compose ps          # en ~1 minuto, todos "healthy"
 ```
 
-Sin las bases GeoLite2, las alertas se guardan sin GeoIP. Después, programa la actualización semanal (§9).
+La primera vez, `geoipupdate` descarga GeoLite2 (unos 80 MB; su log dice `# Descarga correcta`). Mientras tanto, las alertas se guardan sin GeoIP. Después se actualiza solo una vez por semana (§9).
 
 ## 6. Verificar
 
@@ -190,13 +189,12 @@ sudo docker stats --no-stream        # RAM: redis ≤ 64 MB, collector ≤ 128 M
 - hace una copia en caliente en `DATA_DIR/backups/surimapa-AAAA-MM-DD.db`, verificada con `quick_check`;
 - conserva las últimas `BACKUP_KEEP` copias.
 
-**Actualización de GeoIP.** `geoipupdate` no queda en marcha: es una ejecución puntual (`GEOIPUPDATE_FREQUENCY=0`, perfil `geoip`, sin `restart`). MaxMind limita las descargas diarias por cuenta y cada reintento cuenta, así que un contenedor que se reinicia en bucle tras un fallo de descarga puede agotar el cupo (`429 LIMIT_EXCEEDED`) y seguir fallando. Prográmalo una vez por semana, por ejemplo en el crontab de root (MaxMind publica los martes y los viernes):
+**Actualización de GeoIP.** El contenedor `geoipupdate` se programa solo; no hace falta cron. Una vez al día (contando desde que arranca) mira la marca `DATA_DIR/geoip/.ultima-descarga-ok`: si no existe o tiene más de 7 días, hace una pasada con 30 s de reintentos; si sale bien renueva la marca, y si falla escribe `# Fallo: se reintenta dentro de 24 h` y lo intenta al día siguiente **sin reiniciarse**. Importa porque MaxMind limita las descargas diarias por cuenta y cada reintento cuenta: con el modo bucle de la propia imagen más `restart`, un fallo de descarga puede convertirse en un bucle de reinicios que agota el cupo (`429 LIMIT_EXCEEDED`).
 
-```bash
-0 4 * * 4  cd /opt/surimapa/app && docker compose run --rm geoipupdate
-```
-
-El colector recarga los `.mmdb` solo (comprueba su fecha cada hora). Si una semana falla, se siguen usando las bases anteriores y se reintenta la siguiente.
+- El contenedor está *healthy* si hubo una descarga correcta en los últimos 8 días.
+- Forzar una actualización: `sudo docker compose exec geoipupdate /usr/bin/entry.sh`.
+- Aplazar las actualizaciones (p. ej. tras un `429`): `sudo touch -d "AAAA-MM-DD HH:MM UTC" DATA_DIR/geoip/.ultima-descarga-ok`; descargará en la primera comprobación diaria en que la marca tenga más de 7 días.
+- El colector recarga los `.mmdb` solo (comprueba su fecha cada hora). Si una actualización falla, se siguen usando las bases anteriores.
 
 **Restaurar una copia**
 
@@ -235,8 +233,6 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # borra todos los datos
 - Las carpetas compartidas usan ACL. Da acceso al UID 10001 con el `chown` desde un contenedor efímero del §3.
 - Si editas desde macOS por SMB, excluye `._*`, `.DS_Store` y `.smbdelete*` al copiar.
 - En Synology hace falta la red del host (§8) para el syslog del firewall.
-- Actualización semanal de GeoIP (§9): *Panel de control → Programador de tareas → Crear → Tarea programada → Script definido por el usuario*, usuario `root`, semanal, script `cd /volume1/docker/surimapa/app && docker compose run --rm geoipupdate`.
-
 ## 11. Solución de problemas
 
 | Síntoma | Causa / solución |
@@ -245,8 +241,8 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # borra todos los datos
 | El colector se reinicia con «unable to open database file» | El UID 10001 no puede escribir en `DATA_DIR/data` (§3) |
 | Panel vacío y `redis_queue_len` siempre a 0 | El sensor no envía. Revisa su configuración de Redis y que llegue a `NAS_LAN_IP:6379` |
 | `redis_queue_len` no para de crecer | El colector está parado o falla: `docker compose logs collector` |
-| Alertas sin país ni ciudad | GeoLite2 aún no se ha descargado, o las credenciales de MaxMind son incorrectas: lanza `docker compose run --rm geoipupdate` y lee su salida |
-| geoipupdate: `429 LIMIT_EXCEEDED` | Cupo diario de descargas de MaxMind agotado. Espera 24 h sin lanzarlo; si empezó tras un fallo de descarga, corrige antes esa causa |
+| Alertas sin país ni ciudad | GeoLite2 aún no se ha descargado, o las credenciales de MaxMind son incorrectas: `docker compose logs geoipupdate` |
+| geoipupdate: `429 LIMIT_EXCEEDED` | Cupo diario de descargas de MaxMind agotado. No fuerces descargas en 24 h (el ciclo diario ya espera); si empezó tras un fallo de descarga, corrige antes esa causa |
 | Tu IP pública aparece como atacante | Rellena `WAN_IPS` |
 | Solo sube `fw_discarded_source` | El origen del syslog no es `PFSENSE_IP`: revisa la dirección de origen en el firewall y que el colector use la red del host (§8) |
 | Solo sube `fw_discarded_iface` | `FW_IFACE` no coincide con el nombre de la WAN en `filterlog` |

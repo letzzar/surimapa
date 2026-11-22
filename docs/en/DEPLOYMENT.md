@@ -2,7 +2,7 @@
 
 **English** · [Español](../es/DESPLIEGUE.md)
 
-Surimapa runs with Docker Compose: three long-running containers (`redis`, `collector`, `portal`) plus `geoipupdate`, which runs once a week to refresh GeoLite2. This guide covers a generic Linux host and includes notes for Synology NAS. Once it is running, follow the [data sources guide](SOURCES.md) to send it alerts.
+Surimapa runs as four containers with Docker Compose: `redis`, `collector`, `portal` and `geoipupdate`, which refreshes GeoLite2 once a week on its own schedule. This guide covers a generic Linux host and includes notes for Synology NAS. Once it is running, follow the [data sources guide](SOURCES.md) to send it alerts.
 
 All IP addresses below are **examples**. Replace them with your own:
 
@@ -98,7 +98,7 @@ Rules:
 
 - **Never commit `.env`**, and keep its values out of logs and screenshots.
 - Put comments on their own line if a value is not parsed well.
-- Check the interpolation without printing secrets: `sudo docker compose config --services` must list `redis`, `collector` and `portal` (`geoipupdate` is in the `geoip` profile, §9).
+- Check the interpolation without printing secrets: `sudo docker compose config --services` must list the 4 services.
 
 ### Personalise the map (optional)
 
@@ -113,12 +113,11 @@ After changing them, rebuild the portal with `sudo docker compose up -d --build 
 
 ```bash
 cd /opt/surimapa/app
-sudo docker compose run --rm geoipupdate   # downloads GeoLite2 (about 80 MB) and exits
 sudo docker compose up -d --build
 sudo docker compose ps          # after ~1 minute, all "healthy"
 ```
 
-Without the GeoLite2 databases, alerts are stored without GeoIP. Then schedule the weekly update (§9).
+On its first start `geoipupdate` downloads GeoLite2 (about 80 MB; its log says `# Descarga correcta`). Until it finishes, alerts are stored without GeoIP. After that it updates once a week by itself (§9).
 
 ## 6. Verify
 
@@ -190,13 +189,12 @@ sudo docker stats --no-stream        # RAM: redis ≤ 64 MB, collector ≤ 128 M
 - writes a hot backup to `DATA_DIR/backups/surimapa-YYYY-MM-DD.db`, verified with `quick_check`;
 - keeps the last `BACKUP_KEEP` backups.
 
-**GeoIP update.** `geoipupdate` is not left running: it is a one-shot job (`GEOIPUPDATE_FREQUENCY=0`, profile `geoip`, no `restart`). MaxMind limits daily downloads per account and every retry counts, so a container restarting in a loop after a failed download can exhaust the quota (`429 LIMIT_EXCEEDED`) and keep failing. Schedule it once a week instead, for example in root's crontab (MaxMind publishes on Tuesdays and Fridays):
+**GeoIP update.** The `geoipupdate` container schedules itself; no cron job is needed. Once a day (counting from its start) it checks the marker `DATA_DIR/geoip/.ultima-descarga-ok`: if it is missing or older than 7 days, it runs one update pass with 30 s of retries; on success it renews the marker, on failure it logs `# Fallo: se reintenta dentro de 24 h` and tries again the next day **without restarting**. This matters because MaxMind limits daily downloads per account and every retry counts: with the image's own loop mode plus `restart`, a failed download can turn into a restart loop that exhausts the quota (`429 LIMIT_EXCEEDED`).
 
-```bash
-0 4 * * 4  cd /opt/surimapa/app && docker compose run --rm geoipupdate
-```
-
-The collector reloads the `.mmdb` files on its own (it checks their date every hour). If one week fails, the previous databases keep working and the next run tries again.
+- The container is *healthy* if there was a successful download in the last 8 days.
+- Force an update: `sudo docker compose exec geoipupdate /usr/bin/entry.sh`.
+- Postpone updates (e.g. after a `429`): `sudo touch -d "YYYY-MM-DD HH:MM UTC" DATA_DIR/geoip/.ultima-descarga-ok`; it will download at the first daily check after the marker is 7 days old.
+- The collector reloads the `.mmdb` files on its own (it checks their date every hour). If an update fails, the previous databases keep working.
 
 **Restore a backup**
 
@@ -235,8 +233,6 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # deletes all data
 - Shared folders use ACLs. Grant UID 10001 access with the throwaway-container `chown` from §3.
 - If you edit files from macOS over SMB, exclude `._*`, `.DS_Store` and `.smbdelete*` when copying.
 - Host networking (§8) is required on Synology for the firewall syslog.
-- Weekly GeoIP update (§9): *Control Panel → Task Scheduler → Create → Scheduled Task → User-defined script*, user `root`, weekly, script `cd /volume1/docker/surimapa/app && docker compose run --rm geoipupdate`.
-
 ## 11. Troubleshooting
 
 | Symptom | Cause / fix |
@@ -245,8 +241,8 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # deletes all data
 | collector restarts, "unable to open database file" | `DATA_DIR/data` is not writable by UID 10001 (§3) |
 | Panel empty, `redis_queue_len` stays 0 | The sensor is not sending. Check its Redis settings and that it reaches `NAS_LAN_IP:6379` |
 | `redis_queue_len` keeps growing | The collector is down or failing: check `docker compose logs collector` |
-| Alerts without country/city | GeoLite2 is not downloaded yet, or the MaxMind credentials are wrong: run `docker compose run --rm geoipupdate` and read its output |
-| geoipupdate: `429 LIMIT_EXCEEDED` | MaxMind's daily download quota is used up. Wait 24 h without running it; if it started after a failed download, fix that cause first |
+| Alerts without country/city | GeoLite2 is not downloaded yet, or the MaxMind credentials are wrong: `docker compose logs geoipupdate` |
+| geoipupdate: `429 LIMIT_EXCEEDED` | MaxMind's daily download quota is used up. Do not force updates for 24 h (the daily cycle already waits); if it started after a failed download, fix that cause first |
 | Your own public IP appears as an attacker | Set `WAN_IPS` |
 | Only `fw_discarded_source` grows | The syslog source is not `PFSENSE_IP`: check the firewall's source address, and that the collector uses host networking (§8) |
 | Only `fw_discarded_iface` grows | `FW_IFACE` does not match the WAN name in `filterlog` |
