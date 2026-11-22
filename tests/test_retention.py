@@ -56,7 +56,9 @@ def test_el_colector_la_ejecuta_cuando_toca(tmp_path, real_alert):
     c = Collector(cfg)
     old = normalize(json.dumps(real_alert))
     old["ts_ms"] = 0                                          # 1970
-    store.insert_batch(c.db, [old, normalize(json.dumps(real_alert))])
+    recent = normalize(json.dumps(real_alert))
+    recent["ts_ms"] = int(datetime.now(timezone.utc).timestamp() * 1000)   # la alerta de ejemplo caducaría
+    store.insert_batch(c.db, [old, recent])
     c.maybe_retention()                                       # aún no es la hora
     assert c.db.execute("SELECT COUNT(*) FROM events").fetchone()[0] == 2
     c.next_retention = datetime(2000, 1, 1, tzinfo=timezone.utc)
