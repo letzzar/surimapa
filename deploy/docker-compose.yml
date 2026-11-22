@@ -28,15 +28,20 @@ services:
 
   geoipupdate:
     image: maxmindinc/geoipupdate:latest
+    # Ejecución puntual: descarga si hay versión nueva y termina. Se lanza una vez por semana
+    # (cron o tarea programada) con `docker compose run --rm geoipupdate` (docs: despliegue, §9).
+    # Sin `restart`: en modo bucle, un fallo (p. ej. 429 de MaxMind) hacía que Docker lo relanzara
+    # cada ~5 min y cada intento gastaba descargas del cupo diario. El perfil evita que `up -d` lo arranque.
+    profiles: ["geoip"]
     environment:                  # solo sus variables (no recibe la contraseña de Redis)
       GEOIPUPDATE_ACCOUNT_ID: ${GEOIPUPDATE_ACCOUNT_ID:-}
       GEOIPUPDATE_LICENSE_KEY: ${GEOIPUPDATE_LICENSE_KEY:-}
       GEOIPUPDATE_EDITION_IDS: ${GEOIPUPDATE_EDITION_IDS:-GeoLite2-City GeoLite2-ASN}
-      GEOIPUPDATE_FREQUENCY: ${GEOIPUPDATE_FREQUENCY:-168}
+      GEOIPUPDATE_FREQUENCY: 0     # una sola pasada
+      GEOIPUPDATE_RETRY_FOR: 30s   # reintentos dentro de la pasada (por defecto 5 min, que agotan el cupo)
       TZ: ${TZ:-UTC}
     volumes: ["${DATA_DIR}/geoip:/usr/share/GeoIP"]
     mem_limit: 32m
-    restart: unless-stopped
 
   collector:
     build: ./collector
