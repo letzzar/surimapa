@@ -35,6 +35,7 @@ const Api = (() => {
     const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
     try {
       const res = await fetch(url, { signal: ctrl.signal, headers: { Accept: "application/json" } });
+      if (res.status === 401) location.assign("/login");             // sesión caducada o cerrada
       if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
       return await res.json();
     } catch (err) {
@@ -46,6 +47,7 @@ const Api = (() => {
   }
 
   return {
+    config:   ()           => get("/api/config"),
     health:   ()           => get("/api/health"),
     summary:  (f)          => get("/api/summary", filterParams(f)),
     timeline: (f)          => { const p = filterParams(f); p.set("bucket", "auto"); return get("/api/timeline", p); },

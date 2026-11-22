@@ -66,8 +66,9 @@ Surimapa maneja **datos no confiables**: un atacante controla buena parte de lo 
   - inserta los datos solo con `textContent` (nunca `innerHTML`);
   - funciona bajo una Content-Security-Policy estricta (`default-src 'self'`) y no hace peticiones a terceros.
 - **Acceso al portal:**
-  - protegido con HTTP Basic, con comparación en tiempo constante y espera tras cada fallo;
-  - no arranca sin credenciales;
+  - pantalla de acceso: la contraseña solo se guarda como hash scrypt y cada fallo tiene una espera;
+  - cookie de sesión `Secure`/`HttpOnly`/`SameSite=Strict` y comprobación de origen en los POST;
+  - no arranca sin credenciales y se sirve solo a través de un proxy inverso con HTTPS;
   - **no lo expongas a Internet**: úsalo en tu LAN o a través de una VPN (WireGuard, Tailscale…).
 - **Redis usa ACL:** el usuario anónimo (Suricata) solo puede hacer `LPUSH`/`RPUSH`/`PING` sobre la clave de alertas; leer exige contraseña.
 - **Syslog del firewall:** el receptor solo acepta datagramas de la IP del firewall configurada.

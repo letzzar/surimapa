@@ -573,6 +573,23 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
 .btn-theme .i-moon { display: none; }                         /* en oscuro se ofrece el sol (pasar a claro) */
 :root[data-theme="light"] .btn-theme .i-sun { display: none; }
 :root[data-theme="light"] .btn-theme .i-moon { display: block; }
+.btn-nav {
+  display: inline-flex; align-items: center; height: 34px; padding: 0 12px; color: var(--ink-2); text-decoration: none;
+  font-size: 13px; font-weight: 600; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.btn-nav:hover { color: var(--ink); border-color: var(--border-2); }
+.logout { display: contents; }
+
+/* ---------- Login (login.html) ---------- */
+.login { max-width: 360px; width: calc(100% - 32px); margin: 48px auto; display: flex; flex-direction: column; gap: 14px; }
+.login h2 { margin: 0; font-size: 16px; }
+.login label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.login input {
+  font: inherit; font-size: 14px; height: 38px; padding: 0 10px; color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.login input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.login-error { margin: 0; font-size: 13px; color: var(--bad-ink); }
 .btn-filters { display: none; }                               /* solo en móvil */
 .filter-extra { display: contents; }
 .btn-filters .count {
@@ -660,6 +677,7 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   .filters { display: contents; }                       /* sus hijos se reparten en la barra */
   .live { order: 2; margin-left: auto; height: 30px; padding: 0 10px; }
   .btn-theme { order: 3; width: 30px; height: 30px; }
+  .btn-nav { order: 3; height: 30px; padding: 0 10px; }
   .seg { order: 4; flex: 1 1 auto; }
   .seg button { flex: 1; padding: 6px 4px; }
   .btn-filters {

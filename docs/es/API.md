@@ -4,13 +4,21 @@
 
 API JSON de solo lectura, servida por el contenedor `portal` bajo `/api`.
 
-- **Autenticación:** todo exige **HTTP Basic** (`PORTAL_USER` / `PORTAL_PASSWORD`).
+- **Autenticación:** todo salvo `/login` y `/healthz` exige la cookie de sesión `sur_session`, que se obtiene enviando el formulario de acceso. Sin ella, `/api/*` devuelve `401`. La cookie es `Secure`: usa la dirección HTTPS.
 - **Caché:** las respuestas llevan `Cache-Control: no-store`.
 - **Errores:** un parámetro no válido devuelve `422`; si falta la base de datos, `503`.
 
 ```bash
-curl -s -u surimapa "http://192.168.1.10:8095/api/summary?range=24h"
+read -rs P                                    # contraseña del portal, sin mostrarla
+curl -s -c cookies.txt -d "username=surimapa" --data-urlencode "password=$P" https://surimapa.example.lan/login
+curl -s -b cookies.txt "https://surimapa.example.lan/api/summary?range=24h"
 ```
+
+| Endpoint | Notas |
+|---|---|
+| `POST /login` | Campos de formulario `username` y `password`. `303` a `/` con la cookie, o `401` |
+| `POST /logout` | Cierra la sesión |
+| `GET /healthz` | Comprobación pública de que el contenedor responde: `{"status":"ok"}` |
 
 ## Filtros comunes
 
@@ -29,6 +37,7 @@ Los aceptan `summary`, `timeline`, `top`, `map`, `events` y `events.csv`:
 | Endpoint | Devuelve |
 |---|---|
 | `GET /api/health` | `status` (`ok`/`degraded`), `last_event_ms`, `collector_heartbeat_age_s`, `redis_queue_len`, `db_size_bytes` |
+| `GET /api/config` | `version` (versión de Surimapa) y `bledeagle_url` (enlace al portal hermano, o `null`) |
 | `GET /api/summary` | `total`, `unique_ips`, `unique_countries`, `by_severity`, y las mismas cifras del periodo anterior (`previous`) |
 | `GET /api/timeline?bucket=auto` | `bucket_ms` y `points[]` con `ts_ms`, `sev1`, `sev2`, `sev3` |
 | `GET /api/top/{dim}?limit=10` | Ranking; `dim` ∈ `remote_ip`, `signature`, `country`, `asn`, `dest_port`, `category`; `limit` ≤ 50. Elementos: `key`, `label`, `count` (+ `country_iso`, `as_org` en IPs; + `severity` en firmas) |

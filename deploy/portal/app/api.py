@@ -7,17 +7,19 @@ import io
 import ipaddress
 import json
 import logging
+import os
 import time
 from contextlib import ExitStack
 from datetime import datetime, timezone
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 import redis
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from . import db, queries
+from . import __version__, db, queries
 from .cache import TTLCache
 from .queries import Filters
 
@@ -40,6 +42,26 @@ PANEL_TOP_LIMIT = 10
 PANEL_PAGE_SIZE = 25
 PANEL_FW_TOP_DIMS = ("remote_ip", "dest_port")                  # tarjeta «Bloqueos del firewall»
 cache = TTLCache()
+
+
+def sibling_url(raw: str) -> str | None:
+    """URL del portal hermano (Bledeagle) para la barra superior: solo https:// con host; si no, sin enlace."""
+    raw = raw.strip()
+    if not raw:
+        return None
+    try:
+        parts = urlsplit(raw)
+        parts.port                                    # ValueError si el puerto no es válido
+        ok = parts.scheme == "https" and bool(parts.hostname) and parts.username is None
+    except ValueError:
+        ok = False
+    if not ok:
+        log.warning("BLEDEAGLE_URL no es una URL https:// válida: se omite el enlace")
+        return None
+    return raw
+
+
+BLEDEAGLE_URL = sibling_url(os.environ.get("BLEDEAGLE_URL", ""))
 
 Range = Literal["1h", "24h", "7d", "30d", "90d"]
 Direction = Literal["in", "out", "local"]
@@ -162,6 +184,11 @@ async def warm_loop() -> None:
 
 
 # ---------- Endpoints ----------
+@router.get("/config")
+def config() -> dict:
+    return {"bledeagle_url": BLEDEAGLE_URL, "version": __version__}
+
+
 @router.get("/health")
 def health() -> dict:
     out = {"status": "ok", "last_event_ms": None, "collector_heartbeat_age_s": None,

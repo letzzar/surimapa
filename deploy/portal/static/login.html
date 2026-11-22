@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Entrar · Surimapa</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/css/app.css">
+  <script src="/js/theme.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3 4.5 6v5.5c0 4.6 3.1 8.3 7.5 9.5 4.4-1.2 7.5-4.9 7.5-9.5V6L12 3Z"/>
+          <path d="m9 12 2 2 4-4"/>
+        </svg>
+      </span>
+      <div>
+        <h1>SURIMAPA</h1>
+        <p class="brand-sub">Suricata IDS · pfSense</p>
+      </div>
+    </div>
+  </header>
+  <main>
+    <!-- El servidor quita «hidden» del aviso cuando las credenciales no son válidas (main.py). -->
+    <form class="login card" method="post" action="/login">
+      <h2>Entrar</h2>
+      <p class="login-error" role="alert" hidden>Usuario o contraseña incorrectos</p>
+      <label>Usuario <input name="username" autocomplete="username" required maxlength="64" autofocus></label>
+      <label>Contraseña <input name="password" type="password" autocomplete="current-password" required maxlength="256"></label>
+      <button type="submit" class="btn-primary">Entrar</button>
+    </form>
+  </main>
+</body>
+</html>

@@ -163,6 +163,8 @@ class Api(SimpleHTTPRequestHandler):
             return super().do_GET()
         q = parse_qs(u.query)
         p = u.path
+        if p == "/api/config":
+            return self.send_json({"bledeagle_url": "https://bledeagle.lan.example", "version": "1.1.0"})
         if p == "/api/health":
             return self.send_json({"status": "ok", "last_event_ms": self.events[-1]["ts_ms"],
                                    "collector_heartbeat_age_s": 7, "redis_queue_len": 0,

@@ -61,8 +61,10 @@ sudo nano .env
 | Variable | Example | Notes |
 |---|---|---|
 | `NAS_LAN_IP` | `192.168.1.10` | **Required.** Redis (6379/tcp) and the firewall syslog (5140/udp) listen **only** on this IP |
-| `PORTAL_PORT` | `8095` | Port of the web portal |
-| `PORTAL_USER` / `PORTAL_PASSWORD` | `surimapa` / long random | **Required.** HTTP Basic credentials |
+| `PORTAL_PORT` | `8095` | Portal port, published **only on `127.0.0.1`** for the HTTPS proxy (§7) |
+| `PORTAL_USER` | `surimapa` | **Required.** User of the login page |
+| `PORTAL_PASSWORD_HASH` | `scrypt:…` | **Required.** scrypt hash of the portal password (see below). The password itself is never stored |
+| `BLEDEAGLE_URL` | `https://bledeagle.example.lan` | Optional. Adds a link to a sibling portal in the top bar. Only `https://` URLs are accepted; empty or invalid = no link |
 | `REDIS_PASSWORD` | long random | **Required.** Password of the Redis user `surimapa` (collector and portal) |
 | `REDIS_KEY` | `suricata` | Redis list the sensor writes to. Must match the sender |
 | `WAN_IPS` | `203.0.113.7` | Your own public IP(s), comma separated. With them, outbound alerts from your WAN IP are classified correctly. If your WAN IP is dynamic, update it when it changes |
@@ -83,11 +85,20 @@ Generate passwords:
 openssl rand -base64 32 | tr -d '/+=' | cut -c1-32
 ```
 
+Generate the portal password hash (it asks for the password twice and prints the line to paste into `.env`):
+
+```bash
+cd /opt/surimapa/app
+sudo docker run --rm -it -v "$PWD/portal/app/auth.py:/auth.py:ro" python:3.12-slim python /auth.py
+```
+
+`docker compose run` does not work for this: the compose file refuses to start while `PORTAL_PASSWORD_HASH` is empty. The hash contains no `$`, so it can be pasted as is.
+
 Rules:
 
 - **Never commit `.env`**, and keep its values out of logs and screenshots.
 - Put comments on their own line if a value is not parsed well.
-- Check the interpolation without printing secrets: `sudo docker compose config --services` must list the 4 services.
+- Check the interpolation without printing secrets: `sudo docker compose config --services` must list `redis`, `collector` and `portal` (`geoipupdate` is in the `geoip` profile, §9).
 
 ### Personalise the map (optional)
 
@@ -114,13 +125,11 @@ Without the GeoLite2 databases, alerts are stored without GeoIP. Then schedule t
 ```bash
 # collector: startup, DB schema, syslog listener, heartbeat counters every 30 s
 sudo docker compose logs collector | tail -20
-# API health (asks for the portal password)
-curl -s -u surimapa http://192.168.1.10:8095/api/health
+# portal liveness (public, no login): prints {"status":"ok"}
+curl -s http://127.0.0.1:8095/healthz
 ```
 
-`/api/health` returns `status` (`ok` / `degraded`), `last_event_ms`, `collector_heartbeat_age_s`, `redis_queue_len` and `db_size_bytes`.
-
-Open `http://192.168.1.10:8095` in a browser and log in. The panel stays empty until a sensor sends data (see [SOURCES.md](SOURCES.md)).
+Set up the HTTPS proxy (§7), open `https://surimapa.example.lan` in a browser and log in. The panel stays empty until a sensor sends data (see [SOURCES.md](SOURCES.md)). Its health strip and `GET /api/health` show `status` (`ok` / `degraded`), `last_event_ms`, `collector_heartbeat_age_s`, `redis_queue_len` and `db_size_bytes`.
 
 Heartbeat counters in the collector log:
 
@@ -137,10 +146,19 @@ Heartbeat counters in the collector log:
 
 - **Redis (6379/tcp)** is published only on `NAS_LAN_IP`. Anonymous clients can only **append** alerts to the queue (`LPUSH`/`RPUSH`/`PING`); reading or deleting requires the `surimapa` password. The remaining risk is a LAN device injecting fake alerts. If you have other network segments (VLANs, VPN), block their access to port 6379 on your router.
 - **Firewall syslog (5140/udp)**: only datagrams whose source is `PFSENSE_IP` are accepted. UDP can be spoofed inside the LAN; the worst case is fake blocks on the map.
-- **Portal**: LAN or VPN only. **Never** forward it from the Internet. HTTP Basic over plain HTTP is fine inside a trusted LAN. For encryption:
-  - use a VPN that already encrypts (WireGuard, Tailscale); or
-  - use `tailscale serve --https=443 http://127.0.0.1:8095`; or
-  - put a reverse proxy with TLS in front (Caddy, nginx, Traefik).
+- **Portal**: LAN or VPN only. **Never** forward it from the Internet. It has a login page (scrypt password hash, 1 s delay per failed attempt) and a session cookie marked `Secure`, `HttpOnly` and `SameSite=Strict`, valid for 12 h and kept in memory (restarting the portal logs everyone out). POST requests from another origin are rejected.
+- **HTTPS is required.** Browsers drop `Secure` cookies on plain HTTP, so the login would loop. The portal listens only on `127.0.0.1:PORTAL_PORT`; put a reverse proxy with TLS on the same host. Minimal Caddy example (`/etc/caddy/Caddyfile`):
+
+  ```
+  surimapa.example.lan {
+      tls internal
+      reverse_proxy 127.0.0.1:8095
+  }
+  ```
+
+  - `tls internal` uses Caddy's own CA, good for a LAN-only name: install its root certificate on your devices (`caddy trust`, or copy `root.crt` from Caddy's data folder), or browsers will warn. With a real domain you can use a Let's Encrypt certificate (DNS challenge) instead.
+  - Any proxy works (nginx, Traefik…) as long as it passes the original `Host` header: the portal compares it with `Origin` on POST requests. Caddy does it by default; in nginx add `proxy_set_header Host $host;`.
+  - If the proxy runs as a container, attach it to this project's network and point it at `portal:8000`; then you can remove the `ports` line of `portal`.
 - On Synology, the DSM firewall does **not** reliably filter ports published by Docker (Docker inserts its own iptables rules). Rely on the binding to `NAS_LAN_IP`, the ACLs and your router rules.
 
 ## 8. Why the collector uses host networking
@@ -223,7 +241,7 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # deletes all data
 
 | Symptom | Cause / fix |
 |---|---|
-| `docker compose` fails with "Definir … en .env" | A required variable is empty (`NAS_LAN_IP`, `REDIS_PASSWORD`, `PORTAL_USER`, `PORTAL_PASSWORD`, `PFSENSE_IP`) |
+| `docker compose` fails with "Definir … en .env" | A required variable is empty (`NAS_LAN_IP`, `REDIS_PASSWORD`, `PORTAL_USER`, `PORTAL_PASSWORD_HASH`, `PFSENSE_IP`) |
 | collector restarts, "unable to open database file" | `DATA_DIR/data` is not writable by UID 10001 (§3) |
 | Panel empty, `redis_queue_len` stays 0 | The sensor is not sending. Check its Redis settings and that it reaches `NAS_LAN_IP:6379` |
 | `redis_queue_len` keeps growing | The collector is down or failing: check `docker compose logs collector` |
@@ -232,4 +250,6 @@ sudo rm -rf /opt/surimapa /srv/surimapa      # deletes all data
 | Your own public IP appears as an attacker | Set `WAN_IPS` |
 | Only `fw_discarded_source` grows | The syslog source is not `PFSENSE_IP`: check the firewall's source address, and that the collector uses host networking (§8) |
 | Only `fw_discarded_iface` grows | `FW_IFACE` does not match the WAN name in `filterlog` |
-| Browser keeps asking for the password | Wrong `PORTAL_USER`/`PORTAL_PASSWORD`. After editing `.env`, run `docker compose up -d portal` |
+| Login says "Usuario o contraseña incorrectos" | Wrong user, or `PORTAL_PASSWORD_HASH` does not match the password. Generate it again (§4) and run `docker compose up -d portal` |
+| Login accepted but you land on the login page again | You are on plain HTTP: the `Secure` cookie is dropped. Use the HTTPS proxy (§7) |
+| Login answers "Origen no permitido" (403) | The proxy does not pass the original `Host` header (§7) |

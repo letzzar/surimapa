@@ -4,13 +4,21 @@
 
 Read-only JSON API served by the `portal` container, under `/api`.
 
-- **Authentication:** everything requires **HTTP Basic** (`PORTAL_USER` / `PORTAL_PASSWORD`).
+- **Authentication:** everything except `/login` and `/healthz` requires the session cookie `sur_session`, obtained by posting the login form. Without it, `/api/*` returns `401`. The cookie is `Secure`, so use the HTTPS address.
 - **Caching:** responses carry `Cache-Control: no-store`.
 - **Errors:** invalid parameters return `422`; a missing database returns `503`.
 
 ```bash
-curl -s -u surimapa "http://192.168.1.10:8095/api/summary?range=24h"
+read -rs P                                    # portal password, not echoed
+curl -s -c cookies.txt -d "username=surimapa" --data-urlencode "password=$P" https://surimapa.example.lan/login
+curl -s -b cookies.txt "https://surimapa.example.lan/api/summary?range=24h"
 ```
+
+| Endpoint | Notes |
+|---|---|
+| `POST /login` | Form fields `username`, `password`. `303` to `/` with the cookie, or `401` |
+| `POST /logout` | Ends the session |
+| `GET /healthz` | Public liveness check for the container: `{"status":"ok"}` |
 
 ## Common filters
 
@@ -29,6 +37,7 @@ Accepted by `summary`, `timeline`, `top`, `map`, `events` and `events.csv`:
 | Endpoint | Returns |
 |---|---|
 | `GET /api/health` | `status` (`ok`/`degraded`), `last_event_ms`, `collector_heartbeat_age_s`, `redis_queue_len`, `db_size_bytes` |
+| `GET /api/config` | `version` (Surimapa version) and `bledeagle_url` (sibling portal link, or `null`) |
 | `GET /api/summary` | `total`, `unique_ips`, `unique_countries`, `by_severity`, and the same figures for the `previous` period |
 | `GET /api/timeline?bucket=auto` | `bucket_ms` and `points[]` with `ts_ms`, `sev1`, `sev2`, `sev3` |
 | `GET /api/top/{dim}?limit=10` | Ranking; `dim` ∈ `remote_ip`, `signature`, `country`, `asn`, `dest_port`, `category`; `limit` ≤ 50. Items: `key`, `label`, `count` (+ `country_iso`, `as_org` for IPs; + `severity` for signatures) |

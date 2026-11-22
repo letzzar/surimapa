@@ -82,12 +82,15 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?Definir REDIS_PASSWORD en .env}
       REDIS_KEY: ${REDIS_KEY:-suricata}
       PORTAL_USER: ${PORTAL_USER:?Definir PORTAL_USER en .env}
-      PORTAL_PASSWORD: ${PORTAL_PASSWORD:?Definir PORTAL_PASSWORD en .env}
+      PORTAL_PASSWORD_HASH: ${PORTAL_PASSWORD_HASH:?Definir PORTAL_PASSWORD_HASH en .env (python -m app.auth)}
+      BLEDEAGLE_URL: ${BLEDEAGLE_URL:-}      # enlace a un portal hermano en la barra (vacío = sin enlace)
       TZ: ${TZ:-UTC}
       DB_PATH: /data/surimapa.db
     # rw: WAL necesita el fichero -shm; la app abre la BD en mode=ro + query_only.
     volumes: ["${DATA_DIR}/data:/data"]
-    ports: ["${PORTAL_PORT:-8095}:8000"]
+    # Solo en 127.0.0.1: la cookie de sesión es Secure, así que se entra por un proxy HTTPS en este host
+    # (docs: despliegue, «HTTPS»). Si el proxy es un contenedor en la red de este proyecto, se puede quitar.
+    ports: ["127.0.0.1:${PORTAL_PORT:-8095}:8000"]
     depends_on: [collector]
     mem_limit: 192m
     restart: unless-stopped

@@ -508,6 +508,21 @@
     });
   }
 
+  // Versión y enlace al portal hermano (Bledeagle). La API solo devuelve URLs https:// validadas;
+  // sin BLEDEAGLE_URL (o no válida) llega null y el enlace no aparece.
+  async function loadSiblingLink() {
+    try {
+      const { bledeagle_url: url, version } = await Api.config();
+      if (version) $("app-version").textContent = ` · v${version}`;
+      if (!url) return;
+      const a = $("nav-bledeagle");
+      a.href = url;
+      a.hidden = false;
+    } catch (err) {
+      console.error("[Surimapa]", err);
+    }
+  }
+
   // ---------- Arranque ----------
   async function start() {
     Tables.configure({
@@ -527,6 +542,7 @@
       console.error("[Surimapa]", err);
       Dom.toast("No se pudo cargar el mapa base");
     }
+    loadSiblingLink();
     refreshHealth();
     setInterval(refreshHealth, HEALTH_MS);
     loadDashboard(true);

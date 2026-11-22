@@ -53,7 +53,7 @@ Surimapa handles **untrusted data** (an attacker controls much of what an IDS lo
 - Parameterised SQL only; strict validation of every field; text truncated and control characters stripped.
 - Packet payloads are **never stored**.
 - The frontend inserts data with `textContent` only (no `innerHTML`), under a strict Content-Security-Policy (`default-src 'self'`), with no third-party requests.
-- The portal is protected with HTTP Basic auth (constant-time comparison, delay on failure) and refuses to start without credentials. **Do not expose it to the Internet**: use it on your LAN or through a VPN (WireGuard, Tailscale…).
+- The portal has a login page: password stored only as a scrypt hash, delay on failure, session cookie `Secure`/`HttpOnly`/`SameSite=Strict`, same-origin check on POST. It refuses to start without credentials and is served only through an HTTPS reverse proxy. **Do not expose it to the Internet**: use it on your LAN or through a VPN (WireGuard, Tailscale…).
 - Redis uses ACLs: the anonymous user (Suricata) can only `LPUSH`/`RPUSH`/`PING` the alert key; reading requires a password.
 - The firewall syslog listener only accepts datagrams from the configured firewall IP.
 - Containers run as a non-root user with memory limits.

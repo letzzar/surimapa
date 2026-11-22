@@ -4,6 +4,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from app import api as papi
+from app import auth
 from app import db as pdb
 from app.main import app
 from surimapa_collector import store
@@ -90,8 +92,8 @@ def client(tmp_path, monkeypatch):
     conn.close()
     monkeypatch.setattr(pdb, "DB_PATH", path)
     monkeypatch.setattr(pdb, "redis_client", lambda: FakeRedis())
-    c = TestClient(app)
-    c.auth = ("tester", "clave-de-prueba")
+    c = TestClient(app, base_url="https://testserver")        # la cookie es Secure
+    c.cookies.set(auth.COOKIE, auth.create_session())
     return c
 
 
@@ -121,6 +123,28 @@ def test_cabeceras_de_seguridad_y_sin_docs(client):
     assert r.headers["cache-control"] == "no-store"
     for path in ("/docs", "/redoc", "/openapi.json"):
         assert client.get(path).status_code == 404
+
+
+# ---------- Enlace al portal hermano (Bledeagle) ----------
+@pytest.mark.parametrize("raw", ["https://bledeagle.lan.example", "https://bledeagle.lan.example:8443/"])
+def test_sibling_url_valida(raw):
+    assert papi.sibling_url(f"  {raw} ") == raw
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "http://bledeagle.lan.example", "javascript:alert(1)",
+                                 "https://", "https://user:pw@bledeagle.lan.example", "https://h:99999",
+                                 "//bledeagle.lan.example", "bledeagle.lan.example"])
+def test_sibling_url_rechaza(raw):
+    assert papi.sibling_url(raw) is None
+
+
+def test_config(client, monkeypatch):
+    from app import __version__
+    assert client.get("/api/config").json() == {"bledeagle_url": None, "version": __version__}
+    monkeypatch.setattr(papi, "BLEDEAGLE_URL", "https://bledeagle.lan.example")
+    r = client.get("/api/config")
+    assert r.json() == {"bledeagle_url": "https://bledeagle.lan.example", "version": __version__}
+    assert r.headers["cache-control"] == "no-store"
 
 
 def test_sirve_el_panel(client):
@@ -246,7 +270,7 @@ def test_fw_map(client):
     assert {c["country_iso"]: c["count"] for c in d["countries"]} == {"FR": 2, "US": 1}
     assert [(p["lat"], p["lon"], p["count"], p["city"]) for p in d["points"]] == [
         (48.9, 2.4, 2, "París"), (37.8, -97.8, 1, None)]
-    assert client.get("/api/fw/map", auth=None).status_code == 401
+    assert TestClient(app).get("/api/fw/map").status_code == 401
 
 
 # ---------- Exportación CSV ----------
@@ -283,7 +307,7 @@ def test_events_csv_tope_y_bloques(client, monkeypatch):
 def test_events_csv_validacion(client):
     assert client.get("/api/events.csv?lat=10").status_code == 422
     assert client.get("/api/events.csv?country=us").status_code == 422
-    assert client.get("/api/events.csv", auth=None).status_code == 401
+    assert TestClient(app).get("/api/events.csv").status_code == 401
 
 
 def test_csv_cell_neutraliza_formulas():
@@ -382,58 +406,115 @@ def test_ttlcache_caduca_y_limita_entradas(monkeypatch):
     assert c.get("b") is None and len(c) == 1
 
 
-# ---------- Autenticación (HTTP Basic) ----------
+# ---------- Autenticación (login con cookie de sesión) ----------
+GOOD = {"username": "tester", "password": "clave-de-prueba"}
+
+
 @pytest.fixture
 def anon(client, monkeypatch):
     from app import main
     monkeypatch.setattr(main, "AUTH_FAIL_DELAY_S", 0)
-    c = TestClient(app)
-    return c
+    return TestClient(app, base_url="https://testserver", follow_redirects=False)
 
 
-@pytest.mark.parametrize("path", ["/", "/index.html", "/js/app.js", "/api/health", "/api/summary", "/api/stream",
-                                  "/api/events/1", "/vendor/world-110m.geojson"])
-def test_todo_requiere_credenciales(anon, path):
+@pytest.mark.parametrize("path", ["/", "/index.html", "/js/app.js", "/vendor/world-110m.geojson"])
+def test_panel_sin_sesion_redirige_al_login(anon, path):
+    r = anon.get(path)
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    assert "default-src 'self'" in r.headers["content-security-policy"]
+    assert r.headers["referrer-policy"] == "same-origin"
+
+
+@pytest.mark.parametrize("path", ["/api/health", "/api/summary", "/api/stream", "/api/events/1"])
+def test_api_sin_sesion_401_sin_dialogo_del_navegador(anon, path):
     r = anon.get(path)
     assert r.status_code == 401
-    assert r.headers["www-authenticate"].startswith('Basic realm="Surimapa"')
-    assert "default-src 'self'" in r.headers["content-security-policy"]
+    assert "www-authenticate" not in r.headers
 
 
-@pytest.mark.parametrize("auth", [("tester", "mala"), ("otro", "clave-de-prueba"), ("tester", ""),
-                                  ("", ""), ("tester", "clave-de-prueba "), ("TESTER", "clave-de-prueba")])
-def test_credenciales_incorrectas(anon, auth):
-    assert anon.get("/api/health", auth=auth).status_code == 401
+@pytest.mark.parametrize("path", ["/login", "/healthz", "/css/app.css", "/js/theme.js"])
+def test_rutas_publicas(anon, path):
+    assert anon.get(path).status_code == 200
 
 
-@pytest.mark.parametrize("header", ["Basic", "Basic !!!", "Bearer abc", "Basic dGVzdGVy",    # sin ':'
-                                    "Basic " + "//79"])
-def test_cabecera_malformada(anon, header):
-    assert anon.get("/api/health", headers={"Authorization": header}).status_code == 401
+def test_login_correcto_da_cookie_segura(anon):
+    r = anon.post("/login", data=GOOD)
+    assert r.status_code == 303 and r.headers["location"] == "/"
+    cookie = r.headers["set-cookie"].lower()
+    assert all(a in cookie for a in ("sur_session=", "secure", "httponly", "samesite=strict"))
+    assert anon.get("/api/health").status_code == 200
+    assert anon.get("/").status_code == 200
 
 
-def test_credenciales_correctas(anon):
-    assert anon.get("/api/health", auth=("tester", "clave-de-prueba")).status_code == 200
-    lower = {"Authorization": "basic dGVzdGVyOmNsYXZlLWRlLXBydWViYQ=="}    # esquema en minúsculas
-    assert anon.get("/api/health", headers=lower).status_code == 200
+@pytest.mark.parametrize("data", [{"username": "tester", "password": "mala"}, {"username": "otro", "password": "clave-de-prueba"},
+                                  {"username": "tester", "password": ""}, {}, {"username": "TESTER", "password": "clave-de-prueba"},
+                                  {"username": "tester", "password": "clave-de-prueba "}])
+def test_login_incorrecto(anon, data):
+    r = anon.post("/login", data=data)
+    assert r.status_code == 401
+    assert "set-cookie" not in r.headers
+    assert '<p class="login-error" role="alert">' in r.text           # aviso visible
+    assert anon.get("/api/health").status_code == 401
 
 
-def test_contrasena_con_dos_puntos_y_unicode(anon, monkeypatch):
+def test_login_sin_error_por_defecto(anon):
+    assert '<p class="login-error" role="alert" hidden>' in anon.get("/login").text
+
+
+def test_login_cuerpo_demasiado_grande(anon):
+    r = anon.post("/login", content=b"username=tester&password=clave-de-prueba&x=" + b"a" * 5000,
+                  headers={"Content-Type": "application/x-www-form-urlencoded"})
+    assert r.status_code == 401
+
+
+def test_contrasena_unicode(anon, monkeypatch):
     from app import main
-    monkeypatch.setattr(main, "PORTAL_PASSWORD", "a:b:ñ€")
-    assert anon.get("/api/health", auth=("tester", "a:b:ñ€")).status_code == 200
+    monkeypatch.setattr(main, "PORTAL_PASSWORD_HASH", auth.hash_password("a:b:ñ€ &="))
+    assert anon.post("/login", data={"username": "tester", "password": "a:b:ñ€ &="}).status_code == 303
+
+
+def test_login_otro_origen_rechazado(anon):
+    r = anon.post("/login", data=GOOD, headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+    # «null» llega si la Referrer-Policy es no-referrer: se rechaza (por eso la política es same-origin).
+    assert anon.post("/login", data=GOOD, headers={"Origin": "null"}).status_code == 403
+    assert anon.post("/login", data=GOOD, headers={"Origin": "https://testserver"}).status_code == 303
+
+
+def test_logout_invalida_la_sesion(anon):
+    anon.post("/login", data=GOOD)
+    token = anon.cookies.get(auth.COOKIE)
+    r = anon.post("/logout")
+    assert r.status_code == 303 and r.headers["location"] == "/login"
+    assert not auth.valid_session(token)
+    anon.cookies.set(auth.COOKIE, token)                              # reutilizar la cookie antigua no sirve
+    assert anon.get("/api/health").status_code == 401
+
+
+def test_sesion_caducada(anon, monkeypatch):
+    token = auth.create_session()
+    t = time.time()
+    monkeypatch.setattr(auth.time, "time", lambda: t + auth.SESSION_HOURS * 3600 + 1)
+    assert not auth.valid_session(token)
+
+
+def test_token_inventado(anon):
+    anon.cookies.set(auth.COOKIE, "inventado")
+    assert anon.get("/api/health").status_code == 401
+
+
+def test_hash_malformado():
+    assert not auth.verify_password("x", "scrypt:1:2")
+    assert not auth.verify_password("x", "bcrypt:1:2:3:4:5")
+    assert auth.verify_password("x", auth.hash_password("x"))
 
 
 def test_intento_fallido_espera(anon, monkeypatch):
-    import time
     from app import main
     monkeypatch.setattr(main, "AUTH_FAIL_DELAY_S", 0.3)
     t0 = time.perf_counter()
-    anon.get("/api/health", auth=("tester", "mala"))
+    anon.post("/login", data={"username": "tester", "password": "mala"})
     assert time.perf_counter() - t0 >= 0.3
-    t0 = time.perf_counter()
-    anon.get("/api/health")                         # sin cabecera (1.ª visita): sin espera
-    assert time.perf_counter() - t0 < 0.3
 
 
 # ---------- Filtro de la lista por origen (clic en el mapa) ----------

@@ -3,15 +3,17 @@ import os
 import sys
 from pathlib import Path
 
-# Credenciales del portal para los tests (el portal no arranca sin ellas).
-os.environ.setdefault("PORTAL_USER", "tester")
-os.environ.setdefault("PORTAL_PASSWORD", "clave-de-prueba")
-
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "deploy" / "collector"))
 sys.path.insert(0, str(ROOT / "deploy" / "portal"))
+
+# Credenciales del portal para los tests (el portal no arranca sin ellas).
+from app import auth as _auth  # noqa: E402
+
+os.environ.setdefault("PORTAL_USER", "tester")
+os.environ.setdefault("PORTAL_PASSWORD_HASH", _auth.hash_password("clave-de-prueba"))
 
 FIXTURES = ROOT / "tests" / "fixtures"
 
